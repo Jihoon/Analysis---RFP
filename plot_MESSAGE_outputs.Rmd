@@ -1,0 +1,254 @@
+---
+title: "Plot MESSAGE key outputs"
+output: html_document
+---
+
+```{r include=FALSE}
+knitr::opts_chunk$set(echo=FALSE)
+```
+
+1. Plots of Key variables from MESSAGE runs (SSP1-3) with various climate policies
+
+1.1 Import data and rearrange for ggplot
+```{r}
+library(tidyverse)
+library(readxl)
+library(ggplot2)
+
+datapath = "C:/Users/min/IIASA/VAN RUIJVEN Bas - Finance/UNEP FI/Data/CDLINKS_stocktaking_MESSAGE_native_regions_FULL.csv"
+raw_df = read_csv(datapath) %>% filter(REGION == "World") %>% 
+  mutate(SSP = case_when(grepl("SSP1", SCENARIO) ~ "SSP1", 
+                         grepl("SSP3", SCENARIO) ~ "SSP3",
+                         TRUE ~ "SSP2")) %>%
+  mutate(budget = case_when(grepl("1600", SCENARIO) ~ 1600, 
+                         grepl("1000", SCENARIO) ~ 1000,
+                         grepl("400", SCENARIO) ~ 400,
+                         TRUE ~ Inf)) %>% 
+  select(-MODEL, -REGION) %>%
+  mutate(SCENARIO=sub("_V4", "", SCENARIO)) %>% # SCENARIO naems are too long. 
+  mutate(SCENARIO=ifelse(grepl("SSP1|SSP3", SCENARIO), SCENARIO, paste0(SCENARIO, "_SSP2"))) %>% 
+  mutate(Category = case_when(grepl("2020", SCENARIO) ~ "NPi2020",   # Group the scenarios to remove redundant information on figures.
+                              grepl("2030", SCENARIO) ~ "INDC2030",
+                              grepl("NPi_", SCENARIO) ~ "NPi",
+                              grepl("INDCi_", SCENARIO) ~ "INDCi",
+                              grepl("NoPolicy", SCENARIO) ~ "NoPolicy")) %>%
+  mutate(Category = factor(Category,   # Order by types of carriers
+                         levels=c("NoPolicy", "NPi", "INDCi", "NPi2020", "INDC2030"),
+                         labels=c("NoPolicy", "NPi", "INDCi", "NPi2020", "INDC2030"))) 
+
+emissions_df = raw_df %>% filter(VARIABLE %in% c("Emissions|Kyoto Gases"))  #"Emissions|CO2", "Emissions|CH4", "Emissions|N2O", 
+p_carbon_df = raw_df %>% filter(VARIABLE %in% c("Price|Carbon"))
+
+# Long format
+emissions_df_l = emissions_df %>% gather(key = "year", value = "emissions", "2005":"2100", -SCENARIO, -SSP, -budget, -VARIABLE, -Category) 
+p_carbon_df_l = p_carbon_df %>% gather(key = "year", value = "p_carbon", "2005":"2100", -SCENARIO, -SSP, -budget, -VARIABLE, -Category) 
+```
+
+1.2 Emissions plot
+```{r}
+em = ggplot() +
+  geom_line(data = emissions_df_l, aes(x=year, y=emissions, group=SCENARIO, color = Category), size=1.3, alpha = 0.7) + 
+  geom_line(data = p_carbon_df_l %>% filter(budget!=Inf),  # Carbon price line
+            aes(x=year, y=p_carbon*50, group=SCENARIO, color = Category), size=1, alpha = 0.4, linetype="twodash") + 
+  facet_grid(budget~SSP) +
+  labs(y="CO2e emissions [Mt/yr]") + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) + 
+  scale_y_continuous(sec.axis = sec_axis(~./50, name = "Carbon Price [US$2010/t CO2]"))
+print(em)
+
+pdf(file = paste0("./Plot/GHG emissions.pdf"), width = 10.46, height = 6.5)
+print(em)  
+dev.off()
+
+# tiff(file = paste0("./Plot/GHG emissions.tif"), width = 1600, height = 1200)
+png(file = paste0("./Plot/GHG emissions.png"), width = 1600, height = 1200)
+em + theme(text = element_text(size=30))
+dev.off()
+
+```
+
+1.3 Primary energy plot
+```{r}
+Scenario_order = c("NPi2020_SSP1", "INDC2030i_SSP1", "NPi2020_SSP2", "INDC2030i_SSP2", "NPi2020_SSP3", "INDC2030i_SSP3", 
+                                              "NoPolicy_SSP1","NPi_SSP1", "INDCi_SSP1", 
+                                              "NoPolicy_SSP2","NPi_SSP2", "INDCi_SSP2",
+                                              "NoPolicy_SSP3","NPi_SSP3", "INDCi_SSP3")
+                   
+primary_cr = rev(c("Coal","Oil","Gas", "Nuclear", "Hydro", "Solar", "Wind", 
+               "Geothermal", "Ocean", "Biomass", "Non-Biomass Renewables", "Other", "Secondary Energy Trade"))
+
+primary_df = raw_df %>% filter(grepl("Primary Energy", VARIABLE)) %>% 
+  mutate(lvl = str_count(VARIABLE, "\\|"), VARIABLE=sub("Primary Energy\\|", "", VARIABLE)) %>%  # Shorten the VARIABLE names
+  filter(lvl==1) %>%  # Select only the first level category of PE
+  filter(!grepl("Fossil|Trade", VARIABLE)) %>% # Remove "Primary Energy|Fossil" because of double counting, also elec trade to avoid unnecessary confusion
+  select(-lvl) %>%
+  mutate(VARIABLE=factor(VARIABLE,   # Order by types of carriers
+                         levels=primary_cr,
+                         labels=primary_cr)) %>%
+  select(-c("2005", "2010", "2060", "2080", "2090")) # Remove unnecessary years
+```
+
+```{r}
+# Long format
+primary_df_l = primary_df %>% gather(key = "year", value = "EJ", "2020":"2100", -SCENARIO, -SSP, -budget, -VARIABLE) %>%
+  mutate(SCENARIO = gsub("_400|_1000|_1600", "", SCENARIO)) %>%
+  mutate(SCENARIO = factor(SCENARIO, levels=Scenario_order, labels=Scenario_order))  # Reorder scenario labels for better display
+
+# Take into account full combination of SSP/budget to show which scenarios are infeasible on the plots
+full_comb1 = list(SCENARIO=Scenario_order[1:6], budget=c(400, 1000, 1600), year=unique(primary_df_l$year), VARIABLE=unique(primary_df_l$VARIABLE))
+full_comb2 = list(SCENARIO=Scenario_order[7:15], budget=Inf, year=unique(primary_df_l$year), VARIABLE=unique(primary_df_l$VARIABLE))
+full_comb = rbind(do.call(expand.grid, full_comb1), do.call(expand.grid, full_comb2))
+primary_df_l = full_comb %>% left_join(primary_df_l)
+```
+
+Define color schemes for primary energy source
+```{r}
+library(RColorBrewer)
+getPalette = colorRampPalette(brewer.pal(11, "Spectral"))
+CompColors <- rev(getPalette(length(primary_cr)))
+names(CompColors) <- primary_cr
+
+CompColScale <- scale_fill_manual(values = CompColors)
+```
+
+```{r}
+pe_list = lapply(unique(primary_df_l$budget), function(b) {primary_df_l %>% filter(budget==b)})
+names(pe_list) = as.character(unique(primary_df_l$budget))
+
+for (i in 1:length(pe_list)) {
+  pe = ggplot(pe_list[[i]], aes(x=SCENARIO, y=EJ, fill=VARIABLE)) +
+    geom_bar(stat = 'identity', position = 'stack') + 
+    facet_grid(~year) +
+    labs(y="Primary Energy [EJ/yr]", title = paste(names(pe_list)[i], "GtCO₂ budget")) +
+    lims(y=c(-100, 2000)) + 
+    CompColScale +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1))
+  print(pe)  
+  
+  pdf(file = paste0("./Plot/Primary energy ", names(pe_list)[i], ".pdf"), width = 10.46, height = 6.5)
+  print(pe)
+  dev.off()
+  
+  png(file = paste0("./Plot/Primary energy ", names(pe_list)[i], ".png"), width = 1900, height = 1200)
+  print(pe + theme(text = element_text(size=30)))
+  dev.off()
+}
+```
+1.4 Final energy plot
+```{r}
+final_cr = rev(c("Solids","Liquids","Gases", "Electricity", "Heat", "Solar", "Geothermal", "Hydrogen"))
+
+final_df = raw_df %>% filter(grepl("Final Energy", VARIABLE)) %>% mutate(lvl = str_count(VARIABLE, "\\|")) %>% 
+  filter(lvl>0) %>% # Select only the first level category of PE
+  filter(!grepl("Trade|Solids\\|", VARIABLE)) %>% # Remove Electricity Trade
+  mutate(VARIABLE=sub("Final Energy\\|", "", VARIABLE)) %>%
+  # select(-lvl) %>%
+  select(-c("2005", "2010", "2060", "2080", "2090")) # Remove unnecessary years
+
+# Long format
+# final_df_l_eu = final_df %>% # By End-use sector
+#   filter(grepl("Industry|Non-Energy Use|Residential|Transportation", VARIABLE)) %>% 
+#   filter(lvl==2) %>%
+#   gather(key = "year", value = "EJ", "2020":"2100", -SCENARIO, -SSP, -budget, -VARIABLE) 
+
+enduse = c("Industry","Non-Energy Use", "Residential and Commercial", "Transportation")
+# Generate long-format table for each sub-sector
+eu_l = function(sect) {
+  df = final_df %>% # By End-use sector
+    filter(grepl(sect, VARIABLE)) %>% 
+    filter(lvl==2) %>%
+    gather(key = "year", value = "EJ", "2020":"2100", -SCENARIO, -SSP, -budget, -VARIABLE) %>%
+    mutate(SCENARIO = gsub("_400|_1000|_1600", "", SCENARIO)) %>%
+    mutate(SCENARIO = factor(SCENARIO, levels=Scenario_order, labels=Scenario_order)) 
+  return(df)
+}
+final_df_l_eu_list = lapply(enduse, FUN=eu_l)
+names(final_df_l_eu_list) = enduse
+
+final_df_l_cr = final_df %>% # By Carrier
+  filter(!grepl("Industry|Non-Energy Use|Residential|Transportation", VARIABLE)) %>% 
+  gather(key = "year", value = "EJ", "2020":"2100", -SCENARIO, -SSP, -budget, -VARIABLE) %>%
+  mutate(SCENARIO = gsub("_400|_1000|_1600", "", SCENARIO)) %>%
+  mutate(SCENARIO = factor(SCENARIO, levels=Scenario_order, labels=Scenario_order)) %>% # Reorder scenario labels for better display
+  mutate(VARIABLE=factor(VARIABLE,   # Order by types of carriers
+                         levels=final_cr,
+                         labels=final_cr))
+
+# Take into account full combination of SSP/budget to show which scenarios are infeasible on the plots
+full_comb1 = list(SCENARIO=Scenario_order[1:6], budget=c(400, 1000, 1600), year=unique(final_df_l_cr$year), VARIABLE=unique(final_df_l_cr$VARIABLE))
+full_comb2 = list(SCENARIO=Scenario_order[7:15], budget=Inf, year=unique(final_df_l_cr$year), VARIABLE=unique(final_df_l_cr$VARIABLE))
+full_comb = rbind(do.call(expand.grid, full_comb1), do.call(expand.grid, full_comb2))
+final_df_l_cr = full_comb %>% left_join(final_df_l_cr)
+```
+
+Define color schemes for final energy use
+```{r}
+library(RColorBrewer)
+getPalette = colorRampPalette(brewer.pal(11, "Spectral"))
+CompColors_f <- rev(getPalette(length(final_cr)))
+names(CompColors_f) <- final_cr
+
+CompColScale_f <- scale_fill_manual(values = CompColors_f)
+```
+
+```{r}
+fe_list = lapply(unique(final_df_l_cr$budget), function(b) {final_df_l_cr %>% filter(budget==b)})
+names(fe_list) = as.character(unique(final_df_l_cr$budget))
+
+for (i in 1:length(fe_list)) {
+  fe = ggplot(fe_list[[i]], aes(x=SCENARIO, y=EJ, fill=VARIABLE)) +
+    geom_bar(stat = 'identity', position = 'stack') + 
+    facet_grid(~year) +
+    labs(y="Final Energy [EJ/yr]", title = paste(names(fe_list)[i], "GtCO₂ budget")) +
+    lims(y=c(0, 1300)) +
+    CompColScale_f +
+    theme(axis.text.x = element_text(angle = 60, hjust = 1))
+  print(fe)  
+  
+  pdf(file = paste0("./Plot/Final energy ", names(fe_list)[i], ".pdf"), width = 10.46, height = 6.5)
+  print(fe)  
+  dev.off()
+  
+  png(file = paste0("./Plot/Final energy ", names(fe_list)[i], ".png"), width = 1900, height = 1200)
+  print(fe + theme(text = element_text(size=30)))
+  dev.off()
+}
+```
+
+```{r}
+for (j in 1:length(final_df_l_eu_list)) {
+
+  df_l = final_df_l_eu_list[[j]]
+  
+  full_comb1 = list(SCENARIO=Scenario_order[1:6], budget=c(400, 1000, 1600), year=unique(df_l$year), 
+                    VARIABLE=unique(df_l$VARIABLE))
+  full_comb2 = list(SCENARIO=Scenario_order[7:15], budget=Inf, year=unique(df_l$year), 
+                    VARIABLE=unique(df_l$VARIABLE))
+  full_comb = rbind(do.call(expand.grid, full_comb1), do.call(expand.grid, full_comb2))
+  df_l = full_comb %>% left_join(df_l)
+
+  fe_list = lapply(unique(df_l$budget), function(b) {df_l %>% filter(budget==b)})
+  names(fe_list) = as.character(unique(df_l$budget))
+  
+  for (i in 1:length(fe_list)) {
+    fe = ggplot(fe_list[[i]], aes(x=SCENARIO, y=EJ, fill=VARIABLE)) +
+      geom_bar(stat = 'identity', position = 'stack') + 
+      facet_grid(~year) +
+      labs(y="Final Energy [EJ/yr]", title = paste(names(fe_list)[i], "GtCO₂ budget")) +
+      lims(y=c(0, 500)) +
+      # CompColScale_f +
+      theme(axis.text.x = element_text(angle = 60, hjust = 1))
+    print(fe)  
+    
+    pdf(file = paste("./Plot/Final energy", names(fe_list)[i], names(final_df_l_eu_list)[j], ".pdf"), width = 10.46, height = 6.5)
+    print(fe)  
+    dev.off()
+    
+    png(file = paste0("./Plot/Final energy ", names(fe_list)[i], names(final_df_l_eu_list)[j], ".png"), width = 1900, height = 1200)
+    print(fe + theme(text = element_text(size=30)))
+    dev.off()
+  }
+}
+```
+
+ 
