@@ -244,11 +244,39 @@ for (j in 1:length(final_df_l_eu_list)) {
     print(fe)  
     dev.off()
     
-    png(file = paste0("./Plot/Final energy ", names(fe_list)[i], names(final_df_l_eu_list)[j], ".png"), width = 1900, height = 1200)
+    png(file = paste("./Plot/Final energy ", names(fe_list)[i], names(final_df_l_eu_list)[j], ".png"), width = 1900, height = 1200)
     print(fe + theme(text = element_text(size=30)))
     dev.off()
   }
 }
+```
+
+
+GDP and population
+```{r}
+# Unit: Bil$.GDP & Mil.pop
+GDP_pop_df = raw_df %>% filter(VARIABLE %in% c("Population", "GDP|PPP")) 
+
+GDP_pop_df_l = GDP_pop_df %>% gather(key = "year", value = "val", "2005":"2100", -SCENARIO, -SSP, -budget,
+                                     -VARIABLE, -Category) %>% select(-UNIT) %>% spread(VARIABLE, val) %>%
+  mutate(GDP_pcap = `GDP|PPP`*1e3/Population) %>% select(-`GDP|PPP`) %>%
+  mutate(SCENARIO = gsub("_400|_1000|_1600", "", SCENARIO))
+
+# full_comb1 = list(SCENARIO=Scenario_order[1:6], budget=c(400, 1000, 1600), year=unique(final_df_l_cr$year))
+# full_comb2 = list(SCENARIO=Scenario_order[7:15], budget=Inf, year=unique(final_df_l_cr$year))
+# full_comb = rbind(do.call(expand.grid, full_comb1), do.call(expand.grid, full_comb2))
+# GDP_pop_df_l = full_comb %>% left_join(GDP_pop_df_l)
+```
+
+```{r}
+gp = ggplot() +
+  geom_line(data = GDP_pop_df_l, aes(x=year, y=GDP_pcap, group=SCENARIO, color = Category), size=1.3, alpha = 0.7) + 
+  geom_line(data = GDP_pop_df_l, aes(x=year, y=Population*7/1000, group=SCENARIO, color = Category), size=1, alpha = 0.4, linetype="twodash") + 
+  facet_grid(budget~SSP) +
+  labs(y="GDP per capita [US$2010 PPP/yr]") + 
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) + 
+  scale_y_continuous(sec.axis = sec_axis(~./7*1000, name = "Population [Billion]"))
+print(gp)
 ```
 
  
