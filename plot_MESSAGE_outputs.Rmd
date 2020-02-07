@@ -4,7 +4,7 @@ output: html_document
 ---
 
 ```{r include=FALSE}
-knitr::opts_chunk$set(echo=FALSE)
+knitr::opts_chunk$set(echo=FALSE)  # Do not output the intermediate logs in the final html
 ```
 
 1. Plots of Key variables from MESSAGE runs (SSP1-3) with various climate policies
