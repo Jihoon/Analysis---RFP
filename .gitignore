@@ -1,5 +1,4 @@
 *.gz
-*.html
 Data/
 Plot/
 .Rproj.user/
